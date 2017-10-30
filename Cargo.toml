@@ -1,6 +1,6 @@
 [package]
-authors = ["Nathaniel Ringo <remexre@gmail.com>"]
-name = "mandelbrot"
+authors = ["neptunepink <purpleposeidon@gmail.com>", "Nathaniel Ringo <remexre@gmail.com>"]
+name = "quaterdrop"
 version = "0.1.0"
 
 [dependencies]

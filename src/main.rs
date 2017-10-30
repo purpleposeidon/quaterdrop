@@ -24,20 +24,26 @@ struct DrawParams {
 
     width: f64,
     height: f64,
+
+    mouse_x: f64,
+    mouse_y: f64,
+
+    maxi: f64,
+    time: f64,
 }
 impl DrawParams {
     fn new(dims: (u32, u32)) -> DrawParams {
         DrawParams {
-            /*x_min: -2.0,
+            x_min: -2.0,
             x_max: 1.0,
             y_min: -1.0,
-            y_max: 1.0,*/
-            x_min: -0.7832642347569785,
-            x_max: -0.7832642347569401,
-            y_min: -0.12973931718080114,
-            y_max: -0.12973931718077555,
+            y_max: 1.0,
             width: dims.0 as f64,
             height: dims.1 as f64,
+            mouse_x: 0.0,
+            mouse_y: 0.0,
+            maxi: 100.0,
+            time: 0.0,
         }
     }
     fn reset(&mut self) {
@@ -74,6 +80,9 @@ impl DrawParams {
         self.y_min -= s_y;
         self.y_max += s_y;
     }
+    fn clamp(&mut self) {
+        self.maxi = self.maxi.max(1.0).min(1000.0);
+    }
 }
 impl Uniforms for DrawParams {
     fn visit_values<'a, F: FnMut(&str, UniformValue<'a>)>(&'a self, mut f: F) {
@@ -83,6 +92,10 @@ impl Uniforms for DrawParams {
         f("yMax", UniformValue::Double(self.y_max));
         f("width", UniformValue::Double(self.width));
         f("height", UniformValue::Double(self.height));
+        f("mouseX", UniformValue::Double(self.mouse_x));
+        f("mouseY", UniformValue::Double(self.mouse_y));
+        f("maxi", UniformValue::Double(self.maxi));
+        f("time", UniformValue::Double(self.time));
     }
 }
 
@@ -90,7 +103,7 @@ fn main() {
     // Initialize the window.
     let display = WindowBuilder::new()
         .with_multitouch()
-        .with_title("Mandelbrot Viewer")
+        .with_title("quaterdrop")
         .with_vsync()
         .build_glium()
         .expect("couldn't open a window");
@@ -107,11 +120,7 @@ fn main() {
         .expect("couldn't init vertexbuffer");
     let indices = NoIndices(PrimitiveType::TrianglesList);
     // Load the GLSL program.
-    let program = Program::from_source(&display,
-            include_str!("vertex.glsl"),
-            include_str!("fragment.glsl"),
-            None)
-        .expect("couldn't compile program");
+    let mut program = None;
     // Initialize the display parameters.
     let mut draw_params = DrawParams::new(display.get_window()
         .expect("couldn't get window")
@@ -120,13 +129,42 @@ fn main() {
 
     // Input variables.
     let mut mouse_down = false;
+    let mut zw_down = false;
     let mut mouse_last = (0, 0);
+    let mut reload = false;
 
     // Main loop.
     loop {
+        if program.is_none() || reload {
+            fn read(name: &str) -> String {
+                use std::fs::File;
+                use std::io::Read;
+                let mut fd = File::open(name).unwrap();
+                let mut src = String::new();
+                fd.read_to_string(&mut src).unwrap();
+                src
+            }
+            let p = Program::from_source(
+                &display,
+                &read("src/vertex.glsl"),
+                &read("src/fragment.glsl"),
+                None
+            );
+            match p {
+                Err(msg) => {
+                    if !reload {
+                        panic!("Couldn't compile program: {}", msg);
+                    } else {
+                        println!("Couldn't compile program: {}", msg);
+                    }
+                },
+                Ok(p) => program = Some(p),
+            }
+            reload = false;
+        }
         let mut target = display.draw();
         target.clear_color(1.0, 1.0, 1.0, 1.0);
-        target.draw(&vertex_buffer, &indices, &program, &draw_params, &Default::default())
+        target.draw(&vertex_buffer, &indices, program.as_ref().unwrap(), &draw_params, &Default::default())
             .expect("couldn't draw triangles");
         target.finish().expect("drawing failed");
 
@@ -143,19 +181,30 @@ fn main() {
                     VirtualKeyCode::Left => draw_params.scroll(-1.0, 0.0),
                     VirtualKeyCode::Right => draw_params.scroll(1.0, 0.0),
                     VirtualKeyCode::Down => draw_params.scroll(0.0, 1.0),
-                    _ => println!("Key: {:?}", code),
+                    _ => (), //println!("Key: {:?}", code),
                 },
                 Event::MouseInput(state, MouseButton::Left) => mouse_down = match state {
+                    ElementState::Pressed => true,
+                    ElementState::Released => false,
+                },
+                Event::MouseInput(state, MouseButton::Right) => zw_down = match state {
                     ElementState::Pressed => true,
                     ElementState::Released => false,
                 },
                 Event::MouseMoved(x, y) => {
                     if mouse_down {
                         draw_params.pan(mouse_last.0 - x, mouse_last.1 - y);
+                    } else if zw_down {
+                        let dx = x - mouse_last.0;
+                        let dy = y - mouse_last.1;
+                        let w = draw_params.x_max - draw_params.x_min;
+                        let h = draw_params.y_max - draw_params.y_min;
+                        draw_params.mouse_x += dx as f64 * w * 0.001;
+                        draw_params.mouse_y += dy as f64 * h * 0.001;
                     }
                     mouse_last = (x, y);
                 },
-                Event::MouseWheel(MouseScrollDelta::LineDelta(x, y), TouchPhase::Moved) => {
+                Event::MouseWheel(MouseScrollDelta::LineDelta(_x, y), TouchPhase::Moved) => {
                     if y < 0.0 {
                         draw_params.zoom_out()
                     } else {
@@ -166,8 +215,29 @@ fn main() {
                     draw_params.height = h as f64;
                     draw_params.width = w as f64;
                 },
-                _ => println!("Event: {:?}", ev),
+                Event::ReceivedCharacter('.') => {
+                    println!("{:?}", draw_params);
+                },
+                Event::ReceivedCharacter('r') => {
+                    println!("reload");
+                    reload = true;
+                },
+                Event::ReceivedCharacter(c) => {
+                    draw_params.maxi += match c {
+                        'o' => -1.0,
+                        'p' => 1.0,
+                        '[' => -10.0,
+                        ']' => 10.0,
+                        _ => continue,
+                    };
+                    draw_params.clamp();
+                    println!("max iterations: {}", draw_params.maxi);
+                },
+                _ => (),
+                //_ => println!("Event: {:?}", ev),
             }
+            //println!("{:?}, {:?}", (draw_params.x_min, draw_params.x_max), (draw_params.y_min, draw_params.y_max));
         }
+        draw_params.time += 0.01;
     }
 }
