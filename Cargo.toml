@@ -2,6 +2,7 @@
 authors = ["neptunepink <purpleposeidon@gmail.com>", "Nathaniel Ringo <remexre@gmail.com>"]
 name = "quaterdrop"
 version = "0.1.0"
+license = "Apache-2.0/MIT"
 
 [dependencies]
 glium = "0.15.0"
